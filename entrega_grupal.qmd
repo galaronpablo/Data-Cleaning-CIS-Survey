@@ -1,0 +1,1139 @@
+---
+title: "👥Práctica Grupal--Encuesta CIS📑"
+format: 
+  html:
+    theme: united
+    embed-resources: true
+    toc: true
+    toc-location: right
+    toc-title: Índice
+    toc-depth: 12
+author: Hugo Alonso, Gonzalo Blanca, Pablo Galarón, Raúl Palomo
+---
+
+## Introducción 📢
+
+> Para analizar y contrastar la afirmación recogida en la noticia de El País (15/01/2024), según la cual **“un 44% de los hombres cree que se ha llegado tan lejos en la promoción de la igualdad de las mujeres que ahora se les discrimina a ellos”**, hemos seleccionado un conjunto de variables del **Estudio CIS nº 3428** que nos permitirán explorar tanto la percepción subjetiva de discriminación como las condiciones objetivas de desigualdad de género.
+
+LAS VARIABLES SELECCIONADAS SON:
+
+-   **SEXO, EDAD, TAMUNI, INGRESHOG, SITLAB, NIVELESTENTREV, RELIGION, ESCIDEOL, ESCFEMINIS, RECUVOTOG** → variables sociodemográficas y de contexto para analizar cómo influyen el género, la edad, la clase social, la ideología, la religiosidad y la afinidad política en la percepción de discriminación.
+
+-   **P6_2** → pregunta central que mide si las personas creen que los hombres están ahora discriminados.
+
+-   **P4, P7_1, P7_2, P7_3** → percepción de desigualdad real en salarios, ascensos y oportunidades laborales.
+
+-   **TARHOGENTREV_HH, CUIDADOHIJOS_HH, HIJOMENOR** → indicadores objetivos de reparto de tareas domésticas, cuidado y carga familiar.
+
+### Objetivo del análisis 🎯
+
+> Buscamos comprobar si quienes perciben discriminación hacia los hombres presentan diferencias reales en:
+
+-   reparto de tareas domésticas,
+
+-   participación en el cuidado de hijos y personas dependientes,
+
+-   nivel de desigualdad material y laboral que reconocen.
+
+::: callout-note
+Además, esperamos que durante el **proceso de depuración** aparezcan evidencias que muestren si esa percepción depende más de factores ideológicos (ESCIDEOL, ESCFEMINIS, RELIGION, RECUVOTOG) que de la situación objetiva.
+:::
+
+### Hipótesis iniciales 💡
+
+> Es probable que sean **más los hombres que las mujeres** quienes perciban discriminación contra los hombres.
+
+> Esperamos encontrar que quienes expresan esa percepción:
+
+-   **dedican menos tiempo** al hogar y al cuidado que sus parejas mujeres,
+
+-   **reconocen menos** desigualdad en salario y oportunidades laborales,
+
+-   se ubican ideológicamente **más a la derecha** y son **menos afines al feminismo.**
+
+> Los factores objetivos (ingresos, hijos, tareas domésticas) probablemente no expliquen esa percepción tanto como los factores ideológicos.
+
+## Librerías 📚
+
+```{r}
+library(tidyverse)
+library(skimr)
+library(patchwork)
+library(class)
+library(dbscan)
+library(naniar)
+library(psych)
+library(VIM)
+library(mice)
+```
+
+## Carga de datos y selección de variables
+
+> Cargamos la base de datos con read_csv2 que nos identifica el ; como delimitador.
+
+```{r}
+data_num <- read_csv2(file = "../entrega_grupal/MD3428/3428_csv/3428_num.csv") |> 
+  mutate(HIJOMENOR = if_else(HIJOMENOR_99 == 1, NA, HIJOMENOR_1))
+```
+
+::: callout-important
+-   Nos dimos cuenta de que la **variable original HIJOMENOR estaba mal codificada** y no reflejaba bien la realidad.
+-   Por eso, usamos **HIJOMENOR_1 (si tiene hijos menores) y HIJOMENOR_99 (si respondió la pregunta)** para reconstruirla.
+-   Con este código, asignamos NA a quienes no contestaron y usamos el valor correcto de quienes sí respondieron. Así aseguramos que **la variable esté limpia y lista para el análisis.**
+:::
+
+> Seleccionamos las variables que hemos dicho antes.
+
+```{r}
+data_num <- data_num |> 
+  select(
+    SEXO,           # P0a → Sexo
+    EDAD,          # P0b → Edad
+    TAMUNI,        # Tamaño del municipio
+    INGRESHOG,     # P29 → Ingresos del hogar
+    TARHOGENTREV_HH, # Horas dedicadas al hogar (persona entrevistada)
+    HIJOMENOR,    # Tiene hijos menores o no
+    SITLAB,         # P28 → Situación laboral
+    NIVELESTENTREV, # P26a → Nivel de estudios
+    P6_2,          # Opinión: se discrimina a hombres
+    P4,            # Grado de desigualdad en España
+    P7_1,         # Salarios mujeres vs hombres
+    P7_2,         # Ascenso laboral mujeres vs hombres
+    P7_3,         # Oportunidades empleo mujeres vs hombres
+    ESCFEMINIS,    # Escala autodefinición feminista
+    ESCIDEOL,      # Escala ideológica
+    RELIGION,      # Religiosidad
+    CUIDADOHIJOS_HH, # Horas cuidado hijos/as
+    RECUVOTOG # Recuerdo de voto en elecciones generales
+  )
+
+```
+
+### ¿De que tipo son nuestras variables?
+
+Las variables son las siguientes:
+
+> [**CUALITATIVAS**]{style="text-decoration: underline; text-decoration-color: red;"}
+
+-   **SEXO** → cualitativa nominal (sexo del entrevistado)
+
+-   **TAMUNI** → cualitativa ordinal (tamaño del municipio)
+
+-   **INGRESHOG** → cualitativa ordinal (ingresos del hogar)
+
+-   **HIJOMENOR** → cualitativa nominal (si tiene hijos/as menores)
+
+-   **SITLAB** → cualitativa nominal (situación laboral)
+
+-   **NIVELESTENTREV** → cualitativa nominal (nivel de estudios)
+
+-   **GRADACDISC(p6_2)** → cualitativa ordinal (grado de acuerdo de la afirmación)
+
+-   **GRADODESIGUALDAD(p4)** → cualitativa ordinal (grado de desigualdad percibida entre hombres y mujeres en España)
+
+-   **VALSALARIOS(p7_1)** → cualitativa ordinal (valoración de la situación de las mujeres respecto de los hombres en los salarios)
+
+-   **VALPOSASC(p7_2)** → cualitativa ordinal (valoración de la situación de las mujeres respecto de los hombres en las posibilidades de ascenso en el trabajo)
+
+-   **VALOPEMP(p7_3)** → cualitativa ordinal (valoración de la situación de las mujeres respecto de los hombres en las oportunidades para encontrar empleo)
+
+-   **RELIGION** → cualitativa nominal (religión declarada)
+
+-   **RECUVOTOG** → cualitativa nominal (recuerdo de voto)
+
+> [**CUANTITATIVAS**]{style="text-decoration: underline; text-decoration-color: red;"}
+
+-   **EDAD** → cuantitativa discreta (edad en años)
+
+-   **TARHOGENTREV_HH** → cuantitativa discreta (horas dedicadas al hogar)
+
+-   **ESCFEMINIS** → cuantitativa discreta (escala sobre feminismo 0–10)
+
+-   **ESCIDEOL** → cuantitativa discreta (escala ideológica 0–10)
+
+-   **CUIDADOHIJOS_HH** → cuantitativa discreta (horas dedicadas al cuidado de hijos)
+
+## Recodificación de las variables ♻️
+
+> Este proceso es clave porque, si lo hacemos bien ahora, nos ahorrará mucho tiempo y problemas en el análisis posterior.
+
+### NS/NS/NO PROCEDE -\>\> NA
+
+> En este paso calculamos el **porcentaje de respuestas “No sabe / No contesta”** para cada variable y, al comprobar que es bajo, las recodificamos como NA. Esto limpia la base de datos y nos permite trabajar solo con respuestas válidas en los análisis posteriores.
+
+::: callout-note
+Hemos **tenido en cuenta el significado de cada variable** para decidir si recodificar las respuestas “No sabe / No contesta” como NA o mantenerlas como una categoría válida. Por ejemplo, en **RECUVOTOG, nos interesa conservar el “No contesta”** como categoría analizable, mientras que el “No recuerda” lo recodificamos como NA porque no aporta información útil al análisis.
+:::
+
+```{r}
+variables_analizar <- c(
+  "SEXO", "EDAD", "TAMUNI", "INGRESHOG", "TARHOGENTREV_HH",
+  "HIJOMENOR", "SITLAB", "NIVELESTENTREV", "P6_2", "P4", "P7_1", "P7_2",
+  "P7_3", "ESCFEMINIS", "ESCIDEOL", "RELIGION", "CUIDADOHIJOS_HH", "RECUVOTOG"
+)
+
+# Recorremos cada variable y mostramos proporciones
+for (var in variables_analizar) {
+  cat("\nVariable:", var, "\n")
+  print(prop.table(table(data_num[[var]])))
+}
+```
+
+```{r}
+data_num <- data_num |> 
+  mutate(
+    INGRESHOG = ifelse(INGRESHOG %in% c(8, 9), NA, INGRESHOG),
+    TARHOGENTREV_HH = ifelse(TARHOGENTREV_HH %in% c(98, 99), NA, TARHOGENTREV_HH),
+    SITLAB = ifelse(SITLAB == 9, NA, SITLAB),
+    NIVELESTENTREV = ifelse(NIVELESTENTREV %in% c(98, 99), NA, NIVELESTENTREV),
+    P6_2 = ifelse(P6_2 %in% c(8, 9), NA, P6_2),
+    P4 = ifelse(P4 %in% c(8, 9), NA, P4),
+    P7_1 = ifelse(P7_1 %in% c(8, 9), NA, P7_1),
+    P7_2 = ifelse(P7_2 %in% c(8, 9), NA, P7_2),
+    P7_3 = ifelse(P7_3 %in% c(8, 9), NA, P7_3),
+    ESCFEMINIS = ifelse(ESCFEMINIS %in% c(98, 99), NA, ESCFEMINIS),
+    ESCIDEOL = ifelse(ESCIDEOL %in% c(98, 99), NA, ESCIDEOL),
+    RELIGION = ifelse(RELIGION == 9, NA, RELIGION),
+    CUIDADOHIJOS_HH = ifelse(CUIDADOHIJOS_HH %in% c(96, 98, 99), NA, CUIDADOHIJOS_HH), #TENER EN CUENTA EL 16 PARA FUTUROS ANÁLISIS, depende de si responde que tiene hijos o no, var hijomenor
+    RECUVOTOG = ifelse(RECUVOTOG == 9998, NA, RECUVOTOG)
+  )
+```
+
+::: callout-important
+-   En el análisis observamos que el **valor 96** tiene un porcentaje muy alto en la variable **CUIDADOSHIJOS_HH**, pero aun así decidimos recodificarlo como NA. Esto se debe a que este valor representa a personas que no tienen hijos, por lo que la variable depende directamente de HIJOMENOR. **Cuando trabajemos con esta variable en análisis futuros, no vamos a imputar los NA; en su lugar, filtraremos los datos usando la variable HIJOMENOR** para asegurarnos de incluir solo los casos relevantes.
+
+-   Sucede lo mismo con la variable RECUVOTOG, donde el 0 significa los que no tenemos info de su voto, pero en vez de pasarlo a na nos creamos un tipo nuevo porque tenemos la suerte de que es cualitativa y no afecta igual que con las cuantitativas.
+:::
+
+### Conversión a factores con labels
+
+> Recodificamos las variables cualitativas. Las variables P..., las ponemos un nombre acorde a su significado.
+
+```{r}
+data_num <- 
+  data_num |> 
+  rename(GRADACDISC = P6_2,
+         GRADODESIGUALDAD = P4,
+         VALSALARIOS = P7_1,
+         VALPOSASC = P7_2,
+         VALOPEMP = P7_3)
+```
+
+```{r}
+data_num <- data_num |> 
+  mutate(
+    SEXO = factor(SEXO, levels = c(1, 2), labels = c("Hombre", "Mujer")),  # nominal
+    TAMUNI = factor(TAMUNI, 
+                levels = 7:1, 
+                labels = c(">1000000 habitantes", 
+                           "400001-1000000 habitantes", 
+                           "100001-400000 habitantes", 
+                           "50001-100000 habitantes", 
+                           "10001-50000 habitantes", 
+                           "2001-10000 habitantes", 
+                           "≤2000 habitantes"),
+                ordered = TRUE),  # ordinal
+    INGRESHOG = factor(INGRESHOG, levels = 1:6,
+                       labels = c("Más de 5000€", 
+                                  "3901-5000€", 
+                                  "2701-3900€", 
+                                  "1801-2700€", 
+                                  "1100-1800€", 
+                                  "Menos de 1100€"),
+                       ordered = TRUE),  # ordinal
+    HIJOMENOR = factor(HIJOMENOR, levels = c(1, 2),
+                       labels = c("Tiene hijos/as menores", "Ninguno")), # nominal 
+    SITLAB = factor(SITLAB, levels = 1:8,
+                    labels = c("Trabaja", 
+                               "Jubilado/a o pensionista (ha trabajado)", 
+                               "Pensionista (no ha trabajado)", 
+                               "En paro, ha trabajado antes", 
+                               "En paro, busca primer empleo", 
+                               "Estudiante", 
+                               "Trabajo doméstico no remunerado", 
+                               "Otra situación")),  # nominal
+    NIVELESTENTREV = factor(NIVELESTENTREV, levels = 1:16,
+                            labels = c("Menos de 5 años escolarización", 
+                                       "Primaria", 
+                                       "FP básica", 
+                                       "Educación secundaria", 
+                                       "FP grado medio", 
+                                       "Bachillerato", 
+                                       "FP grado superior", 
+                                       "Arquitectura/ingeniería técnica", 
+                                       "Diplomaturas oficiales", 
+                                       "Grado universitario", 
+                                       "Licenciatura", 
+                                       "Arquitectura/ingeniería", 
+                                       "Máster oficial", 
+                                       "Doctorado", 
+                                       "Títulos propios posgrado", 
+                                       "Otros estudios")),  # nominal
+    GRADACDISC = factor(GRADACDISC, 
+                      levels = 5:1, 
+                      labels = c("Nada de acuerdo", 
+                                 "Poco de acuerdo", 
+                                 "Regular", 
+                                 "Bastante de acuerdo", 
+                                 "Muy de acuerdo"),
+                      ordered = TRUE),  # ordinal
+    GRADODESIGUALDAD = factor(GRADODESIGUALDAD, 
+                          levels = 4:1, 
+                          labels = c("Casi inexistentes", 
+                                     "Pequeñas", 
+                                     "Bastante grandes", 
+                                     "Muy grandes"),
+                          ordered = TRUE),  # ordinal
+    VALSALARIOS = factor(VALSALARIOS, levels = 3:1,
+                            labels = c("Peor", "Igual", "Mejor"),
+                            ordered = TRUE),  # ordinal
+    VALPOSASC = factor(VALPOSASC, levels = 3:1,
+                          labels = c("Peor", "Igual", "Mejor"),
+                          ordered = TRUE),  # ordinal
+    VALOPEMP = factor(VALOPEMP, levels = 3:1,
+                         labels = c("Peor", "Igual", "Mejor"),
+                         ordered = TRUE),  # ordinal
+    RELIGION = factor(RELIGION,  levels = 1:6,
+                      labels = c("Católico/a practicante", 
+                                 "Católico/a no practicante", 
+                                 "Creyente de otra religión", 
+                                 "Agnóstico/a", 
+                                 "Indiferente, no creyente", 
+                                 "Ateo/a")),  # nominal
+    RECUVOTOG = factor(RECUVOTOG, levels = c(1, 2, 3, 6, 21, 503, 901, 902, 1201, 1501, 1601, 1602,
+             8995, 8996, 9977, 9999),
+  labels = c(
+    'PSOE (PSC, PSE-EE, PSdeG, PSIB, PSN)',
+    'PP',
+    'VOX',
+    'PACMA',
+    'SUMAR (Podemos, IU, Más País, etc.)',
+    'CCa (Coalición Canaria)',
+    'ERC (Esquerra Republicana)',
+    'JUNTS (Junts per Catalunya)',
+    'BNG (Bloque Nacionalista Galego)',
+    'UPN (Unión del Pueblo Navarro)',
+    'EAJ-PNV (Partido Nacionalista Vasco)',
+    'EH Bildu (Euskal Herria Bildu)',
+    'Otro partido',
+    'En blanco',
+    'Voto nulo',
+    'N.C.'))  # nominal
+  )
+```
+
+-   Comprobamos
+
+```{r}
+data_num |>  distinct(SEXO)
+data_num |>  distinct(TAMUNI)
+data_num |>  distinct(INGRESHOG)
+data_num |>  distinct(HIJOMENOR) 
+data_num |>  distinct(SITLAB)
+data_num |>  distinct(NIVELESTENTREV)
+data_num |>  distinct(GRADACDISC)
+data_num |>  distinct(GRADODESIGUALDAD)
+data_num |>  distinct(VALSALARIOS)
+data_num |>  distinct(VALPOSASC)
+data_num |>  distinct(VALOPEMP)
+data_num |>  distinct(RELIGION)
+data_num |>  distinct(RECUVOTOG)
+```
+
+```{r}
+str(data_num)
+```
+
+✅ **COMPROBADO, BIEN RECODIFICADAS**
+
+## Errores ⚠️
+
+> Las variables **cualitativas están correctamente codificadas.** Sin embargo, en las continuas detectamos anomalías en TARHOGENTREV_HH y CUIDADOSHIJOS_HH.
+
+```{r}
+summary(data_num)
+```
+
+-   **TARHOGENTREV_HH(horas dedicadas a tareas del hogar)**: presenta un valor máximo de 24, lo que implicaría dedicar todo el día a estas tareas, algo **poco realista.** Este valor se aleja mucho de la media (2,41), la mediana (2) y el tercer cuartil (3).
+
+```{r}
+ggplot(data_num) +
+  geom_bar(aes(x = TARHOGENTREV_HH), fill = '#17becf', alpha = 0.8 ) +
+  labs(title = 'Distribución variable TARHOGENTREV_HH') +
+  theme_minimal()
+```
+
+El histograma muestra que la gran mayoría dedica entre 0 y 5 horas a tareas del hogar y valor máximo de 24h esta aislado y sin continuidad en la distribuciónEste dato es poco plausible, por lo que seguramente se trate de un error, asi que vamos a pasarlo a NA directamente.
+
+```{r}
+data_num <- 
+  data_num |> 
+  mutate(TARHOGENTREV_HH = ifelse(TARHOGENTREV_HH == 24, NA, TARHOGENTREV_HH))
+```
+
+-   **CUIDADOHIJOS_HH(horas dedicadas al cuidado de los hijos)**: también tiene un máximo de 24, pero en este caso es plausible, especialmente en familias **con recién nacidos**. No obstante, sigue siendo un valor extremo frente a la media (5,16), la mediana (4) y el tercer cuartil (6).
+
+```{r}
+  ggplot(data_num) +
+    geom_bar(aes(x = CUIDADOHIJOS_HH), fill = '#17becf', alpha = 0.8 ) +
+    labs(title = 'Distribución variable CUIDADOSHIJOS_HH') +
+    theme_minimal()
+```
+
+En este caso, los valores de 24 h podrían formar parte natural de la distribución, que muestra una clara cola derecha. A diferencia del caso anterior, no es un valor aislado, sino una respuesta que se repite. Por ello, no lo consideraremos un error y lo mantendremos, aunque lo tendremos en cuenta en futuros análisis.
+
+## Detección de outliers 🔍
+
+### Univariante
+
+> Aplicamos la función que nos calcula los valores atípicos y extremos.
+
+```{r}
+source("Funcion_atipicos.R")
+
+numeric_integer_vars <- names(which(sapply(data_num, is.numeric) | sapply(data_num, is.integer)))
+# Aplicar la función 'outliers' a cada una de las variables numéricas
+outliers_results <- lapply(numeric_integer_vars, function(var) {
+  outliers(data_num, var)  # Llamar a la función pasando el nombre de la variable
+})
+```
+
+⬇️⬇️⬇️
+
+-   Mirando los boxplots, observamos que las variables **TARHOGENTREV_HH, ESCFEMINIS y CUIDADOHIJOS_HH** presentan datos que podrían considerarse atípicos. Sin embargo, antes de clasificarlos directamente como tales, es importante analizar **si realmente lo son.**
+
+-   Para ello, comenzaremos revisando los histogramas de cada variable, ya que es posible que esos valores simplemente **formen parte de una distribución asimétrica** y no correspondan necesariamente a anomalías. Además, analizaremos los **porcentajes de casos que representan esos valores “atípicos”** dentro de la base de datos, para valorar si, por su peso relativo, pueden considerarse **datos típicos** del conjunto. Vamos a mirarlo variable por variable.
+
+-   No obstante, corroboraremos nuestras hipótesis del univariante al hacer el análisis multivariante y ya tomar la decisión de que hacer con ellos.
+
+::: panel-tabset
+#### Variable TARHOGENTREV_HH
+
+📌 Outliers identified in TARHOGENTREV_HH : 115 outliers 📊 Proportion (%) of outliers: 3.03 %
+
+🚨 Extreme values identified in TARHOGENTREV_HH : 40 extreme values 📊 Proportion (%) of extreme values: 1.05 %
+
+-   **Vamos a cuantificarlos**
+
+```{r}
+#outliers
+outlier_values_th <- boxplot.stats(data_num$TARHOGENTREV_HH)$out 
+outlier_values_th
+
+out_ind_th <- which(data_num$TARHOGENTREV_HH %in% c(outlier_values_th))
+out_ind_th
+
+#extremos
+extreme_values_th <- boxplot.stats(data_num$TARHOGENTREV_HH,coef=3)$out
+extreme_values_th
+
+ext_ind_th <- which(data_num$TARHOGENTREV_HH %in% c(extreme_values_th))
+ext_ind_th
+```
+
+-   El porcentaje de atípicos es del 3,03% y de extremos del 1,05%, lo cual entra dentro del rango que suele considerarse aceptable (entre un 2% y un 5%), aunque no conviene aplicar esta regla de forma automática. Si miramos el histograma, vemos que los outliers están entre 7 y 10 horas, mientras que los extremos van de 10 a 18 horas. Teniendo en cuenta que la variable mide el número de horas dedicadas al hogar, a partir de unas 12 horas ya podríamos decir que es bastante inusual.
+
+-   En el histograma se nota claramente que los extremos están muy lejos del resto de los datos, lo que hace pensar que sería buena idea apartarlos o quitarlos del análisis. En cambio, los outliers, aunque altos, parecen formar parte de la cola natural de la distribución y probablemente reflejen simplemente que algunas personas dedican mucho más tiempo al hogar. Además, siendo un 3,03% frente al 1,05% de los extremos, parece razonable quedarse con los outliers, ya que dedicar entre 7 y 10 horas puede ser mucho, pero no algo súper exagerado. 
+
+-   No obstante, tendremos esto en cuenta pero tomaremos la decisión final en el análisis bivariante. Si no encontramos asociación con ninguna variable, al ser el porcentaje relativamente bajo, nos desprenderemos de ellos.
+
+![](images/clipboard-140032520.png){width="587"}
+
+#### Variable ESCFEMINIS
+
+📌 Outliers identified in ESCFEMINIS : 346 outliers 📊 Proportion (%) of outliers: 8.77 %
+
+🚨 Extreme values identified in ESCFEMINIS : 0 extreme values 📊 Proportion (%) of extreme values: 0 %
+
+-   **Vamos a cuantificarlos**
+
+```{r}
+#outliers
+outlier_values_f <- boxplot.stats(data_num$ESCFEMINIS)$out 
+outlier_values_f
+
+out_ind_f <- which(data_num$ESCFEMINIS %in% c(outlier_values_f))
+out_ind_f
+
+#extremos
+extreme_values_f <- boxplot.stats(data_num$ESCFEMINIS,coef=3)$out
+extreme_values_f
+
+ext_ind_f <- which(data_num$ESCFEMINIS %in% c(extreme_values_f))
+ext_ind_f
+```
+
+-   En esta variable no encontramos valores extremos, aunque sí aparece un porcentaje relativamente alto de outliers, con un 8,77%. La variable mide en una escala del 0 al 10 el nivel de feminismo percibido, donde 0 es “nada feminista” y 10 es “muy feminista”, preguntando a las personas dónde se ubican. Vemos que todos los outliers se concentran en el valor 0, lo cual es bastante interesante porque probablemente esté relacionado con alguna otra variable, ya que si miramos el histograma, la barra del 0 es igual de alta que muchas otras y no destaca visualmente como algo raro.
+
+-   Viendo el alto porcentaje y que todos corresponden al cero, parece haber una asociación y no vamos a tener que quitarlos, en el bivariante veremos.
+
+    ![](images/clipboard-18049767.png){width="574"}
+
+#### Variable CUIDADOHIJOS_HH
+
+📌 Outliers identified in CUIDADOHIJOS_HH : 67 outliers 📊 Proportion (%) of outliers: 6.69 %
+
+🚨 Extreme values identified in CUIDADOHIJOS_HH : 35 extreme values 📊 Proportion (%) of extreme values: 3.49 %
+
+-   **Vamos a cuantificarlos**
+
+```{r}
+#outliers
+outlier_values_ch <- boxplot.stats(data_num$CUIDADOHIJOS_HH)$out 
+outlier_values_ch
+
+out_ind_ch <- which(data_num$CUIDADOHIJOS_HH %in% c(outlier_values_ch))
+out_ind_ch
+
+#extremos
+extreme_values_ch <- boxplot.stats(data_num$CUIDADOHIJOS_HH,coef=3)$out
+extreme_values_ch
+
+ext_ind_ch <- which(data_num$CUIDADOHIJOS_HH %in% c(extreme_values_ch))
+ext_ind_ch
+```
+
+-   En esta variable tenemos un 6,69% de outliers y un 3,49% de extremos, lo que ya empieza a salirse un poco del rango típico del 2-5%. La variable mide el número de horas dedicadas al cuidado de los hijos en el hogar, y cuando miramos los datos vemos valores altos como 13, 16, 20 y hasta 24 horas. Si pensamos en hogares con recién nacidos o bebés, tiene todo el sentido que se reporten valores tan elevados, porque básicamente alguien está pendiente de ellos casi las 24 horas del día.
+
+-   Además, estos valores parecen formar parte de una distribución asimétrica, donde la cola se alarga hacia la derecha con esas horas tan altas. Por eso, nosotros de momento no los quitaríamos, ya que reflejan una situación real y relevante, aunque lo ideal será mirarlo más a fondo en el análisis bivariante para ver si realmente tienen un impacto importante o si están relacionados con otras variables.
+
+    ![](images/clipboard-1921889874.png){width="593"}
+:::
+
+### Bivariante
+
+>En esta parte vamos a ir gráfico por gráfico para ver si los posibles outliers que detectamos antes forman parte de alguna asociación entre variables. La idea es ver si esos valores extremos tienen sentido dentro de un patrón más amplio o si realmente se salen por completo y hay que quitarlos.
+
+:::callout-warning
+Vamos a hacer los gráficos solo para cualitativas porque para cuaanti vs cuanti salen muy mal ya que las variables son cuantitativas discretas. Un ejemplo de lo que comentamos:
+
+```{r}
+ggplot(data_num,aes(CUIDADOHIJOS_HH, TARHOGENTREV_HH)) + 
+  geom_point() +
+  stat_smooth(method = "lm",formula = y ~ x,geom = "smooth")
+```
+
+No hay por donde cogerlo.
+:::
+
+
+:::panel-tabset
+
+#### Variable TARHOGENTREV_HH
+
+```{r}
+ggplot(data_num, aes(x = SEXO, y = TARHOGENTREV_HH)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = TAMUNI, y = TARHOGENTREV_HH)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = INGRESHOG, y = TARHOGENTREV_HH)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = SITLAB, y = TARHOGENTREV_HH)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = GRADACDISC, y = TARHOGENTREV_HH)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = GRADODESIGUALDAD, y = TARHOGENTREV_HH)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+>Los valores extremos de la variable TARHOGENTREV_HH no pueden explicarse claramente mediante ninguna de las variables categóricas analizadas. Aparecen de forma dispersa en todos los grupos, aunque algunas variables como situación laboral o percepción de desigualdad muestran ligeras asociaciones, **pero no suficientes para justificar los valores atípicos más altos.**
+
+- Hemos decidido tratar los valores extremos de la variable TARHOGENTREV_HH para que no distorsionen los análisis. En total detectamos 115 outliers, pero solo 40 eran realmente extremos, porque estaban muy por encima de lo normal (más allá de Q3 + 3·IQR). En lugar de eliminarlos todos o inventar valores, lo que hicimos fue reemplazar solo esos 40 casos por NA. **DEJAMOS OUTLIERS Y QUITAMOS EXTREMOS.** 
+
+:::callout-note
+- Los vamos a quitar después del LOF ya que si los pasamos a na antes, el lof quita los na y no nos selecciona los datos puros.
+:::
+
+Observar donde exactamente están nuestros outliers nos sirve para ver estas relaciones más claras.
+
+```{r}
+data_num[out_ind_th, ]
+```
+
+```{r}
+data_num[ext_ind_th, ]
+```
+
+#### Variable ESCFEMINIS
+
+```{r}
+ggplot(data_num, aes(x = SEXO, y = ESCFEMINIS)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = GRADACDISC, y = ESCFEMINIS)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = GRADODESIGUALDAD, y = ESCFEMINIS)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = VALSALARIOS, y = ESCFEMINIS)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = VALPOSASC, y = ESCFEMINIS)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = VALOPEMP, y = ESCFEMINIS)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data_num, aes(x = RECUVOTOG, y = ESCFEMINIS)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+>Los valores atípicos de 0 en la variable ESCFEMINIS (escala de autodefinición feminista) **no parecen ser errores de codificación, sino respuestas intencionadas y coherentes por parte de ciertos perfiles ideológicos.** Al analizar su asociación con otras variables, observamos patrones claros que eran los que ya veniamos intuyendo en nuestras hipótesis iniciales.
+
+- **RECUVOTOG (recuerdo de voto)**: La gran mayoría de estos valores extremos se concentran entre personas que afirman **haber votado a VOX**, un partido que habitualmente se posiciona de forma crítica frente al feminismo. 
+
+- **GRADODESIGUALDAD (grado de desigualdad percibida)**: Los valores bajos en ESCFEMINIS suelen darse entre quienes **creen que las desigualdades de género en España son pequeñas o casi inexistentes.** Esto tiene sentido, ya que si no se percibe desigualdad, es menos probable que una persona se autodefina como feminista.
+
+- **GRADACDISC (grado de acuerdo con la afirmación de que se discrimina a los hombres)**: Aquí también se ve una relación esperada: quienes más de acuerdo están con esta afirmación tienden a tener puntuaciones más bajas en la escala feminista. 
+
+- **VALSALARIOS, VALPOSASC y VALOPEMP (valoraciones sobre si las mujeres están en peor situación en salarios, ascensos y empleo)**: Los valores de ESCFEMINIS más bajos se asocian con quienes creen que la situación de mujeres y hombres es igual o incluso mejor para ellas. Esto también es lógico: si se percibe que no existe desventaja, es menos probable que se adopte una postura feminista.
+
+- **SEXO**: Aunque hay algún valor 0 tanto en hombres como mujeres, son mucho **más frecuentes entre hombres.**
+
+:::callout-important
+Por tanto, no los eliminamos, nos los quedamos, porque sino estaríamos eliminando algo clave que nos ayuda a rebatir el objetivo que tenemos de desmentir la afirmación que sale en El País. Además el porentaje era bastante elevado
+:::
+
+Observar donde exactamente están nuestros outliers nos sirve para ver estas relaciones más claras.
+
+```{r}
+data_num[out_ind_f, ]
+```
+
+```{r}
+#no hay
+data_num[ext_ind_f, ]
+```
+
+#### Variable CUIDADOHIJOS_HH
+
+```{r}
+ggplot(data_num, aes(x = SEXO, y = CUIDADOHIJOS_HH)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggplot(data_num, aes(x = SITLAB, y = CUIDADOHIJOS_HH)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+>Al mirar la variable CUIDADOHIJOS_HH comparada con el resto, vemos que en la **mayoría de los casos no parece haber una relación clara.** Pero cuando la comparamos con la situación laboral (SITLAB), sí que aparece una cierta asociación. Esto nos hace pensar que esa variable forma parte del comportamiento general de los datos, y por tanto, podríamos estar ante una distribución asimétrica.
+
+- Por eso, de momento no la vamos a eliminar, aunque más adelante, cuando hagamos el análisis con el método LOF, podría que nos indique que sí deberíamos quitarla si se comporta como un valor atípico.
+
+Observar donde exactamente están nuestros outliers nos sirve para ver estas relaciones más claras.
+
+```{r}
+data_num[out_ind_ch, ]
+```
+
+```{r}
+data_num[ext_ind_ch, ]
+```
+
+:::
+
+## Detección y tratamiento Multivariante (LOF) ⚙️
+
+>**LOF** es un algoritmo de detección de valores atípicos basado en la **proximidad y la densidad.**
+
+>LOF se centra en encontrar observaciones que se desvíen del patrón de densidad local. Es decir, **modela los valores atípicos como puntos que están aislados de los datos restantes.** En la práctica, la densidad local se obtiene de los k vecinos más cercanos.
+
+::: callout-warning
+- Cuidado, este algoritmo detecta **“Observaciones atípicas”(filas enteras) no “datos atípicos”(Datos sueltos individuales)** considerando múltiples variables al mismo tiempo.
+
+- Es independiente a lo que acabamos de hacer pero **nos puede ayudar a corregir previos fallos** por ejemplo si no hemos detectado unos ouliers, alomejor el algoritmo nos recalca que están haciendo raras sus observaciones.
+:::
+
+- No podemos aplicar el LOF con NA's, vemos los nas que tenemos.
+```{r}
+#paquete skimr
+data_num |> skim()
+```
+
+- Vemos que la variable de hijos tiene 3003 nas, no podemos quitarnosla y continuar porque nos quitamos un muy alto porcentaje de la base de datos. Vamos a realizar 2 análisis LOF, uno quitando esa variable y otro incluyendola.
+
+### LOF SIN HIJOS
+
+:::panel-tabset
+
+#### Aplicamos la función
+
+- Filtramos las variables y quitamos los nas.
+```{r}
+data_num_sin <- 
+  data_num |> 
+  select(EDAD, TARHOGENTREV_HH, ESCFEMINIS, ESCIDEOL) |> 
+  drop_na()
+```
+
+```{r}
+k <- round(log(nrow(data_num_sin)))
+lof_resultados <- lof(data_num_sin, minPts = k) 
+
+lof_resultados
+```
+
+#### LOF \>1,5
+
+```{r}
+data_num_sin$lof <- lof_resultados #añadimos la variable lof al conjunto de datos original
+
+
+# Los que tienen un LOF mayor de 1.5
+lof_significativos <- 
+  data_num_sin |> 
+  filter(lof > 1.5) |> 
+  relocate(lof, .before = "EDAD") #para que se pueda observar bien en el html
+
+lof_significativos
+```
+
+#### Boxplot de LOF
+
+```{r}
+ggplot(data_num_sin, aes(y = lof)) +
+  geom_boxplot(fill = "skyblue", outlier.color = "red", outlier.shape = 16) +
+  theme_minimal() +
+  labs(title = "Distribución de LOF Scores")
+```
+
+```{r}
+min(lof_significativos$lof)
+max(lof_significativos$lof)
+```
+
+
+#### Gráfico de puntuación LOF
+
+>Este gráfico es útil para entender cómo se distribuyen los outliers en dos variables, pero no refleja todo el análisis de LOF. LOF funciona en el espacio multidimensional, considerando todas las variables al mismo tiempo. Para poder visualizarlo vamos a dejar una variable fija y a representarla de manera bidimensional con el resto de variables(en este caso solo tenemos 4 cuantitativas).
+
+```{r}
+#las cuantitativas
+ggplot(data_num_sin, aes(x = TARHOGENTREV_HH, y = ESCFEMINIS, colour = lof)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red", name = "LOF Score") +
+  labs(title = "Detección de Valores Atípicos con LOF")
+
+ggplot(data_num_sin, aes(x = ESCIDEOL, y = ESCFEMINIS, colour = lof)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red", name = "LOF Score") +
+  labs(title = "Detección de Valores Atípicos con LOF")
+
+ggplot(data_num_sin, aes(x = EDAD, y = ESCFEMINIS, colour = lof)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red", name = "LOF Score") +
+  labs(title = "Detección de Valores Atípicos con LOF")
+```
+
+La escala de color me muestra los LOF MÁS significativos que ahora comentaremos.
+
+:::
+
+### LOF CON HIJOS
+
+:::panel-tabset
+
+#### Aplicamos la función
+
+- Filtramos las variables y quitamos los nas.
+```{r}
+data_num_con <- 
+  data_num |> 
+  select(EDAD, TARHOGENTREV_HH, ESCFEMINIS, ESCIDEOL, CUIDADOHIJOS_HH) |> 
+  drop_na()
+```
+
+
+```{r}
+k <- round(log(nrow(data_num_con)))
+lof_resultados_2 <- lof(data_num_con, minPts = k) 
+
+lof_resultados_2
+```
+
+#### LOF \>1,5
+
+```{r}
+data_num_con$lof <- lof_resultados_2 #añadimos la variable lof al conjunto de datos original
+
+
+# Los que tienen un LOF mayor de 1.5
+lof_significativos_2 <- 
+  data_num_con |> 
+  filter(lof > 1.5) |> 
+  relocate(lof, .before = "EDAD") #para que se pueda observar bien en el html
+
+lof_significativos_2
+```
+
+#### Boxplot de LOF
+
+```{r}
+ggplot(data_num_con, aes(y = lof)) +
+  geom_boxplot(fill = "skyblue", outlier.color = "red", outlier.shape = 16) +
+  theme_minimal() +
+  labs(title = "Distribución de LOF Scores")
+```
+
+```{r}
+min(lof_significativos_2$lof)
+max(lof_significativos_2$lof)
+```
+
+
+#### Gráfico de puntuación LOF
+
+>Este gráfico es útil para entender cómo se distribuyen los outliers en dos variables, pero no refleja todo el análisis de LOF. LOF funciona en el espacio multidimensional, considerando todas las variables al mismo tiempo. Para poder visualizarlo vamos a dejar una variable fija y a representarla de manera bidimensional con el resto de variables(en este caso solo tenemos 4 cuantitativas).
+
+```{r}
+#las cuantitativas
+ggplot(data_num_con, aes(x = EDAD, y = ESCFEMINIS, colour = lof)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red", name = "LOF Score") +
+  labs(title = "Detección de Valores Atípicos con LOF")
+
+ggplot(data_num_con, aes(x = TARHOGENTREV_HH, y = ESCFEMINIS, colour = lof)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red", name = "LOF Score") +
+  labs(title = "Detección de Valores Atípicos con LOF")
+
+ggplot(data_num_con, aes(x = ESCIDEOL, y = ESCFEMINIS, colour = lof)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red", name = "LOF Score") +
+  labs(title = "Detección de Valores Atípicos con LOF")
+
+ggplot(data_num_con, aes(x = CUIDADOHIJOS_HH, y = ESCFEMINIS, colour = lof)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red", name = "LOF Score") +
+  labs(title = "Detección de Valores Atípicos con LOF")
+```
+
+La escala de color me muestra los LOF MÁS significativos que ahora comentaremos.
+
+:::
+
+### Conclusiones LOF 
+
+>Aunque el algoritmo LOF ha detectado algunas observaciones con puntuaciones por encima de 1.5, en ambos análisis (con y sin la variable de cuidado de hijos/as), los valores se mantienen dentro de un rango moderado, **moviéndose entre 1.5 y algo más de 2.**
+
+```{r}
+#sin hijos
+min(lof_significativos$lof)
+max(lof_significativos$lof)
+
+#con hijos
+min(lof_significativos_2$lof)
+max(lof_significativos_2$lof)
+```
+
+
+- Esto significa que, si bien hay observaciones que se alejan ligeramente del patrón general, **no encontramos casos extremos que se desmarquen claramente del resto.** Por tanto, no consideramos que haya observaciones atípicas graves que deban ser eliminadas.
+
+- En vez de eliminar todo lo que supere el umbral de 1.5, lo que hemos hecho es observar cuáles se separan mucho del resto, y al ver que no hay grandes saltos, decidimos mantener todos los casos, ya que aportan información útil.
+
+```{r}
+#sin hijos
+lof_significativos
+
+#con hijos
+lof_significativos_2
+```
+
+**Aunque no veamos una distancia muy grande entre los valores LOF, vemos que los valores más altos de LOF corresponden a los valores de los extremos de la variable TARHOGARENTREV_HH, la cual hemos decidido que los vamos a quitar. El lof ha sido capaz de corroborar las hipótesis que hemos sacado en el bivariante. Pero no quitaremos toda la observación porque hemos identificado los valores que la están haciendo rara, quitamos esos valores y ya.**
+
+:::callout-important
+- Una vez hecho este proceso podemos ya quitar los extremos detectados en el bivariante y confirmados en el lof, los pasamos a na.
+
+```{r}
+data_num <- 
+  data_num |> 
+  mutate(TARHOGENTREV_HH = if_else(TARHOGENTREV_HH >= 10, NA, TARHOGENTREV_HH))
+```
+:::
+
+## Tratamiento de Ausentes 🧩
+
+### Análisis inicial
+
+- Gráficamente
+```{r}
+gg_miss_var(data_num, show_pct = TRUE)
+vis_miss(data_num)
+```
+
+- Cuantificamos
+```{r}
+n_miss(data_num)
+pct_miss(data_num)
+pct_complete_case(data_num)
+```
+
+:::callout.warning
+Este análisis muestra que **solo un 18% de los casos están completos**, es decir, sin ningún valor perdido. Eso significa que si nos quedamos solo con los casos completos, perderíamos más del 80% de los datos, lo cual es una barbaridad. Por eso, la imputación es clave
+:::
+
+### Análisis de cualitativas
+
+#### Visualizamos
+
+```{r}
+#Sexo
+gg_miss_var(data_num, show_pct = TRUE, facet = SEXO)
+
+#TAMUNI
+gg_miss_var(data_num, show_pct = TRUE, facet = TAMUNI)
+
+#INGRESHOG
+gg_miss_var(data_num, show_pct = TRUE, facet = INGRESHOG)
+
+#HIJOMENOR
+gg_miss_var(data_num, show_pct = TRUE, facet = HIJOMENOR)
+
+#SITLAB
+gg_miss_var(data_num, show_pct = TRUE, facet = SITLAB)
+
+#NIVELESTENTREV
+gg_miss_var(data_num, show_pct = TRUE, facet = NIVELESTENTREV)
+
+#GRADACDISC
+gg_miss_var(data_num, show_pct = TRUE, facet = GRADACDISC)
+
+#GRADODESIGUALDAD
+gg_miss_var(data_num, show_pct = TRUE, facet = GRADODESIGUALDAD)
+
+#VALSALARIOS
+gg_miss_var(data_num, show_pct = TRUE, facet = VALSALARIOS)
+
+#VALPOSASC
+gg_miss_var(data_num, show_pct = TRUE, facet = VALPOSASC)
+
+#VALOPEMP
+gg_miss_var(data_num, show_pct = TRUE, facet = VALOPEMP)
+
+#RELIGION
+gg_miss_var(data_num, show_pct = TRUE, facet = RELIGION)
+
+#RECUVOTOG
+gg_miss_var(data_num, show_pct = TRUE, facet = RECUVOTOG)
+```
+
+- Hemos detectado que la **variable recuvotog es mnar ya que muestra una asociación pero no sabemos explicarla del todo.** Además si nos fijamos vemos que hay muchos más missings de los que debería haber si solo hubiesemos pasados a nas "no recuerda". Esto se debe a que el valor cero en esa variable cosrresponde a todos los que no habían votado y no venía especificada en el pdf de las etiquetas y el cuestionario, por lo que en el factor se han ido a nas. 
+
+:::callout-note
+- Un mnar depende de variables "ocultas" en los datos que no tenemos en el dataset. Este es un claro ejemplo. En este caso, al disponer de la encuesta entera hemos detectado que estos mnar están relacionados con no haber votado en las últimas elecciones, lo cual viene recogido en otra variable de la encuesta que no está incluida en nuestro dataset.
+:::
+
+#### Imputación Cualis < 5%
+
+```{r}
+prop.table(table(data_num$NIVELESTENTREV,useNA = "always"))
+#sustituimos los NAs por el valor mas repetido, la moda
+data_num$NIVELESTENTREV_imp <-data_num$NIVELESTENTREV
+data_num$NIVELESTENTREV_imp[is.na(data_num$NIVELESTENTREV_imp)] <-
+  "Licenciatura"
+
+
+prop.table(table(data_num$GRADACDISC,useNA = "always"))
+#sustituimos los NAs por el valor mas repetido, la moda
+data_num$GRADACDISC_imp <-data_num$GRADACDISC
+data_num$GRADACDISC_imp[is.na(data_num$GRADACDISC_imp)] <-
+  "Nada de acuerdo"
+
+
+prop.table(table(data_num$GRADODESIGUALDAD,useNA = "always"))
+#sustituimos los NAs por el valor mas repetido, la moda
+data_num$GRADODESIGUALDAD_imp <-data_num$GRADODESIGUALDAD
+data_num$GRADODESIGUALDAD_imp[is.na(data_num$GRADODESIGUALDAD_imp)] <-
+  "Bastante grandes"
+
+
+prop.table(table(data_num$VALSALARIOS,useNA = "always"))
+#sustituimos los NAs por el valor mas repetido, la moda
+data_num$VALSALARIOS_imp <-data_num$VALSALARIOS
+data_num$VALSALARIOS_imp[is.na(data_num$VALSALARIOS_imp)] <-
+  "Peor"
+
+
+prop.table(table(data_num$VALPOSASC,useNA = "always"))
+#sustituimos los NAs por el valor mas repetido, la moda
+data_num$VALPOSASC_imp <-data_num$VALPOSASC
+data_num$VALPOSASC_imp[is.na(data_num$VALPOSASC_imp)] <-
+  "Peor"
+
+
+prop.table(table(data_num$VALOPEMP,useNA = "always"))
+#sustituimos los NAs por el valor mas repetido, la moda
+data_num$VALOPEMP_imp <-data_num$VALOPEMP
+data_num$VALOPEMP_imp[is.na(data_num$VALOPEMP_imp)] <-
+  "Peor"
+```
+
+```{r}
+vis_miss(data_num)
+```
+
+- Aquí vemos como la imputación por la moda para estas variables cualitativas a funcionado pues ninguna de las imputadas presenta ningún ausente en el vis_miss.
+
+### Análisis de cuantitativas
+
+#### Visualizamos
+
+```{r}
+marginplot(data_num[c("EDAD","TARHOGENTREV_HH")])
+ggplot(data = data_num, aes (x = EDAD, y = TARHOGENTREV_HH )) + geom_miss_point()
+
+ggplot(data = data_num, aes (x = CUIDADOHIJOS_HH , y = TARHOGENTREV_HH )) + geom_miss_point()
+marginplot(data_num[c("CUIDADOHIJOS_HH","TARHOGENTREV_HH")])
+
+ggplot(data = data_num, aes (x = ESCFEMINIS  , y = TARHOGENTREV_HH )) + geom_miss_point()
+marginplot(data_num[c("ESCFEMINIS","TARHOGENTREV_HH")])
+
+ggplot(data = data_num, aes (x = ESCIDEOL   , y = TARHOGENTREV_HH )) + geom_miss_point()
+marginplot(data_num[c("ESCIDEOL","TARHOGENTREV_HH")])
+```
+
+- Tras la elaboración de los gráficos correspondientes a las tres variables continuas analizadas, se ha llegado a una conclusión común: los datos faltantes en estas variables parecen corresponderse con un mecanismo de tipo **MCAR** (*Missing Completely At Random*). Esta conclusión se fundamenta en que no se observa una relación evidente entre la ausencia de datos y otras variables del conjunto; es decir, los datos faltantes son independientes del resto de la información disponible.
+
+- Esta independencia se evidencia claramente en los **margin plots**, donde los **boxplots** se mantienen a una altura similar en las comparaciones, indicando que la distribución de los valores observados no cambia en función de la presencia o ausencia de datos. Aunque en algunos gráficos pueden percibirse ligeras asociaciones, un análisis más detallado revela que estas se deben a una mayor concentración general de observaciones en ciertas zonas del gráfico, y no a una relación directa con la falta de datos. Por lo tanto, concluimos que no existe una asociación sistemática que explique los valores faltantes.
+
+- Como estamos con variables continuas con un un bajo % de missings vamos a imputar por la media.
+
+#### Imputación cuantis
+
+```{r}
+#TARHOGENTREV_HH_media
+data_num$TARHOGENTREV_HH_media <- ifelse(
+  is.na(data_num$TARHOGENTREV_HH),
+  mean(data_num$TARHOGENTREV_HH, na.rm = TRUE),
+  data_num$TARHOGENTREV_HH
+)
+#ESCIDEOL_media
+data_num$ESCIDEOL_media<-data_num$ESCIDEOL
+mean(data_num$ESCIDEOL, na.rm = TRUE)
+
+data_num$ESCIDEOL_media[is.na(data_num$ESCIDEOL_media)] <- mean(data_num$ESCIDEOL_media, na.rm = TRUE)
+
+#ESCFEMINIS_media
+data_num$ESCFEMINIS_MEDIA<-data_num$ESCFEMINIS
+mean(data_num$ESCFEMINIS, na.rm = TRUE)
+
+data_num$ESCFEMINIS_MEDIA[is.na(data_num$ESCFEMINIS_MEDIA)] <- 
+  mean(data_num$ESCFEMINIS_MEDIA, na.rm = TRUE)
+
+
+```
+
+- Vemos si se ajusta bien a la distribucion
+
+```{r}
+#TARHOGENTREV_HH
+
+ggplot(data_num) + geom_density(aes(x = TARHOGENTREV_HH, fill = "Original"), alpha = 0.5) + geom_density(aes(x = TARHOGENTREV_HH_media, fill = "Imputado"), alpha = 0.5) + scale_fill_manual(values = c("Original" = "blue", "Imputado" = "red")) + labs(title = "Comparación de densidades: Original vs. Imputado", x = "TARHOGENTREV_HH", y = "Densidad", fill = "Tipo de dato") + theme_minimal()
+
+#ESCFEMINIS
+ggplot(data_num, aes(x = ESCFEMINIS, fill = "Age")) +
+geom_density(alpha = 0.5) +
+geom_density(aes(x = ESCFEMINIS_MEDIA, fill = "Age_media"),alpha=0.5)
+
+#ESCIDEOL
+ggplot(data_num, aes(x = ESCIDEOL, fill = "ESCIDEOL")) +
+geom_density(alpha = 0.5) +
+geom_density(aes(x = ESCIDEOL_media, fill = "ESCIDEOL_media"),alpha=0.5)
+
+```
+
+- En los gráficos presentados se comparan las distribuciones originales de las variables con las distribuciones resultantes tras la imputación. Se observa que, en todo momento, ambas se ajustan de forma bastante precisa, lo que indica que el proceso de imputación ha sido adecuado. Las imputaciones realizadas no alteran significativamente el comportamiento ni la forma de la distribución original, lo cual sugiere que los valores imputados mantienen la coherencia con los datos observados y no introducen sesgos visibles en la estructura de los datos.
+
+### Imputación Múltiple
+
+>Las variables cualitativas con un porcentaje de valores perdidos superior al 5% serán imputadas mediante el algoritmo MICE (Multiple Imputation by Chained Equations), dado que permite una imputación adecuada respetando la naturaleza categórica de los datos.
+
+```{r}
+metodos <- c(
+  SEXO = "", 
+  EDAD = "", 
+  TAMUNI = "", 
+  INGRESHOG = "cart", 
+  TARHOGENTREV_HH = "", 
+  HIJOMENOR = "", 
+  SITLAB = "", 
+  NIVELESTENTREV = "", 
+  GRADACDISC = "", 
+  GRADODESIGUALDAD = "", 
+  VALSALARIOS = "", 
+  VALPOSASC = "", 
+  VALOPEMP = "", 
+  ESCFEMINIS = "", 
+  ESCIDEOL = "", 
+  RELIGION = "",
+  RECUVOTOG = "cart"
+)
+```
+
+```{r}
+impData <- mice(data_num |> select(
+  -NIVELESTENTREV_imp,
+  -GRADACDISC_imp,
+  -GRADODESIGUALDAD_imp,
+  -VALSALARIOS_imp,
+  -VALPOSASC_imp,
+  -VALOPEMP_imp,
+  -TARHOGENTREV_HH_media,
+  -ESCIDEOL_media,
+  -ESCFEMINIS_MEDIA,
+  -CUIDADOHIJOS_HH), m = 5, maxit = 50, seed = 500, method = metodos)
+```
+
+
+
+#### Visualizamos
+
+```{r}
+##Complete Data
+completeData <- complete(impData, 1)
+```
+
+```{r}
+# Graficar la distribución de la variable categórica antes y después de la imputación
+par(mfrow = c(1, 2)) # Organizar las gráficas en una fila de 2 columnas
+barplot(table(data_num$INGRESHOG, useNA = "ifany"), main = "Antes de la imputación")
+barplot(table(completeData$INGRESHOG), main = "Después de la imputación")
+```
+
+```{r}
+# Graficar la distribución de la variable categórica antes y después de la imputación
+par(mfrow = c(1, 2)) # Organizar las gráficas en una fila de 2 columnas
+barplot(table(data_num$RECUVOTOG, useNA = "ifany"), main = "Antes de la imputación")
+barplot(table(completeData$RECUVOTOG), main = "Después de la imputación")
+```
+
+- Así es como nos quedaría la variable imputada. Vemos que no estamos distorsionando su distribución. Basatante bien.
+
+## BASE DE DATOS DEPURADA 🧹
+
+```{r}
+write.csv(data_num, "base_depurada.csv", row.names = FALSE)
+write.csv(completeData, "base_depurada_mice.csv", row.names = FALSE) #mice
+```
+
